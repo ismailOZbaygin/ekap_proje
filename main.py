@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """EKAP Sözleşme Veri Çekici — CLI entry point.
 
-Usage
------
-Interactive mode (default):
-    $ python main.py
-
-The program prompts for İKN values one at a time.  Type 'q' to quit.
+Pipeline:
+  Phase 1 — State Hydration:    Load existing IKNs into set()
+  Phase 2 — Ingestion:          Playwright fetches from EKAP
+  Phase 3 — Defensive Parsing:  BeautifulSoup extracts veriHtml fields
+  Phase 4 — Dedup & I/O:        Set check → CSV batch append
 """
 
 from __future__ import annotations
@@ -14,11 +13,10 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from datetime import datetime
 
 import config
 from ekap_client import EkapClient, EkapClientError
-from storage import append_to_csv, is_duplicate, prompt_overwrite, remove_row
+from storage import IKNCache, append_record
 
 # ── Logging Setup ──────────────────────────────────────────────────────────────
 
@@ -30,10 +28,7 @@ def _setup_logging() -> None:
         format=log_format,
         handlers=[logging.StreamHandler(sys.stdout)],
     )
-    # Error log file
-    error_log_path = os.path.join(
-        config.OUTPUT_DIR, config.ERROR_LOG
-    )
+    error_log_path = os.path.join(config.OUTPUT_DIR, config.ERROR_LOG)
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     fh = logging.FileHandler(error_log_path, encoding="utf-8")
     fh.setLevel(logging.WARNING)
@@ -59,6 +54,11 @@ def main() -> None:
 
     print(BANNER)
 
+    # ── Phase 1: State Hydration ───────────────────────────────────────
+    cache = IKNCache()
+    loaded = cache.load()
+    print(f"  Cache: {loaded} mevcut İKN yüklendi.\n")
+
     # Initialise client (browser will be launched on first query)
     client = EkapClient()
 
@@ -76,25 +76,26 @@ def main() -> None:
         if not ikn or ikn.lower() == "q":
             break
 
-        # ── Duplicate check ────────────────────────────────────────────
-        if is_duplicate(ikn):
-            overwrite = prompt_overwrite(ikn)
-            if not overwrite:
-                print(f"  ⏭  İKN '{ikn}' atlandı.")
-                skip_count += 1
-                continue
-            else:
-                remove_row(ikn)
-                print(f"  🔄 Eski kayıt silindi, yeni veri çekiliyor…")
+        # ── Phase 4a: Deduplication (pre-fetch) ────────────────────────
+        if cache.contains(ikn):
+            print(f"  ⏭  İKN '{ikn}' zaten kayıtlı — atlandı.")
+            skip_count += 1
+            continue
 
-        # ── Fetch & save ───────────────────────────────────────────────
+        # ── Phase 2 + 3: Ingestion & Parsing ───────────────────────────
         try:
             print(f"  ⏳ İKN '{ikn}' sorgulanıyor…")
             record = client.fetch_contract(ikn)
-            path = append_to_csv(record)
-            print(f"  ✔  Sözleşme verisi bulundu, {path} dosyasına eklendi.")
-            print(record)
-            success_count += 1
+
+            # ── Phase 4b: Dedup & I/O ──────────────────────────────────
+            written = append_record(record, cache)
+            if written:
+                print(f"  ✔  Sözleşme verisi bulundu, CSV'ye eklendi.")
+                print(record)
+                success_count += 1
+            else:
+                print(f"  ⏭  İKN '{ikn}' duplicate — atlandı.")
+                skip_count += 1
 
         except EkapClientError as exc:
             print(f"  ✘  {exc}")

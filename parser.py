@@ -77,46 +77,57 @@ def _match_label(raw_label: str) -> Optional[str]:
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def parse_veri_html(html_content: str, ikn: str) -> ContractRecord:
-    """Parse a single ``veriHtml`` string and return a `ContractRecord`.
-
-    Parameters
-    ----------
-    html_content:
-        Raw HTML string from the ``veriHtml`` field.
-    ikn:
-        The İKN used for the query — stored in the record as-is.
-
-    Returns
-    -------
-    ContractRecord
-        Populated with whatever fields could be found; missing fields
-        default to the empty string.
-    """
+    with open("debug_veri.html", "w", encoding="utf-8") as f:
+        f.write(html_content)
+        
     record = ContractRecord(ikn=ikn)
     soup = BeautifulSoup(html_content, "html.parser")
 
-    for tr in soup.find_all("tr"):
-        tds = tr.find_all("td")
-        if len(tds) < 3:
+    # 1. Bağlam Sınırını (Scope Boundary) daha güvenli bul
+    sozlesme_basligi = None
+    for tag in soup.find_all(["span", "b", "td"]):
+        if "4- Sözleşmenin" in tag.get_text(strip=True):
+            sozlesme_basligi = tag
+            break
+            
+    if not sozlesme_basligi:
+        logger.warning("İKN %s — '4- Sözleşmenin' başlığı bulunamadı. Kapsam daraltılamıyor.", ikn)
+        return record
+
+    baslangic_satiri = sozlesme_basligi.find_parent("tr")
+    
+    if not baslangic_satiri:
+        logger.warning("İKN %s — Başlık satırı (tr) bulunamadı.", ikn)
+        return record
+
+    # 2. Sadece başlığın altındaki satırları tara
+    for tr in baslangic_satiri.find_next_siblings("tr"):
+        try:
+            tds = tr.find_all("td")
+            if len(tds) < 3:
+                continue
+
+            # b etiketini boşver, tüm hücrenin metnini ("a) Tarihi") al.
+            raw_text = tds[0].get_text(strip=True)
+            
+            # Regex: Başlangıçtan kapanış parantezine kadar olan kısmı (örn: "a) ", "d) ") ve sonrasındaki boşlukları sil.
+            clean_text = re.sub(r'^.*?\)\s*', '', raw_text)
+
+            attr = _match_label(clean_text)
+            if attr is None:
+                continue
+
+            # Veriyi al (son td)
+            value = tds[-1].get_text(strip=True)
+            setattr(record, attr, value)
+            
+        except Exception as exc:
+            logger.warning("İKN %s — satır parse hatası (atlanıyor): %s", ikn, exc)
             continue
 
-        # The label lives inside a <b> in the first <td>
-        b_tag = tds[0].find("b")
-        if b_tag is None:
-            continue
-
-        label_text = b_tag.get_text()
-        attr = _match_label(label_text)
-        if attr is None:
-            continue
-
-        # The value is in the last <td> of the row
-        value = tds[-1].get_text(strip=True)
-        setattr(record, attr, value)
-
-    # Log which fields were found / missing
     found = [h for h, v in record.to_dict().items() if v]
     missing = [h for h, v in record.to_dict().items() if not v and h != "İKN"]
+    
     if found:
         logger.debug("İKN %s — bulunan alanlar: %s", ikn, ", ".join(found))
     if missing:
@@ -157,47 +168,28 @@ def find_contract_html(ilan_list: list[dict]) -> Optional[str]:
     return best_html
 
 
-def parse_api_response(response_data: dict, ikn: str) -> Optional[ContractRecord]:
-    """High-level: extract a `ContractRecord` from the full API response.
-
-    Navigates the JSON structure to find ``ilanList`` → ``veriHtml``,
-    then delegates to `parse_veri_html`.
-
-    Returns *None* if no contract data is found.
-    """
-    # Try common JSON structures
-    ilan_list = None
-
-    # Direct top-level
-    if isinstance(response_data, dict):
-        ilan_list = response_data.get("ilanList")
-        # Nested under "data"
-        if ilan_list is None and "data" in response_data:
-            data = response_data["data"]
-            if isinstance(data, dict):
-                ilan_list = data.get("ilanList")
-            elif isinstance(data, list):
-                ilan_list = data
-        # Nested under "result"
-        if ilan_list is None and "result" in response_data:
-            result = response_data["result"]
-            if isinstance(result, dict):
-                ilan_list = result.get("ilanList")
-
-    if not ilan_list:
-        logger.error("İKN %s — API yanıtında 'ilanList' bulunamadı.", ikn)
+def parse_api_response(raw_data: dict, ikn: str) -> Optional[ContractRecord]:
+    # 1. Root objeyi güvenli şekilde al. JSON yapısına göre 'ilanList' doğrudan kökteyse:
+    ilan_list = raw_data.get("item", {}).get("ilanList")
+    
+    # Hata kontrolü: Ya API yapısı değişirse veya boş dönerse? (Defensive Programming)
+    if not ilan_list or not isinstance(ilan_list, list):
+        logger.error("İKN %s — API yanıtında 'ilanList' dizisi bulunamadı veya boş.", ikn)
         return None
 
-    html = find_contract_html(ilan_list)
-    if not html:
-        logger.error("İKN %s — ilanList içinde sözleşme verisi bulunamadı.", ikn)
+    # 2. Tip 4 olan (Sonuç İlanı) objeyi bul. 
+    # next(generator, default_value) -> Bulamazsa None döner, kodu patlatmaz.
+    sonuc_ilani = next((ilan for ilan in ilan_list if str(ilan.get("ilanTip")) == "4"), None)
+
+    if not sonuc_ilani:
+        logger.warning("İKN %s — 'ilanList' içinde ilanTip='4' olan sonuç ilanı bulunamadı.", ikn)
         return None
 
-    record = parse_veri_html(html, ikn)
-
-    # Check if we actually found any useful data
-    if all(v == "" for v in record.to_row()[1:]):
-        logger.error("İKN %s — veriHtml parse edildi ama hiçbir alan bulunamadı.", ikn)
+    # 3. HTML verisini çek ve asıl HTML parser'ına gönder
+    veri_html = sonuc_ilani.get("veriHtml")
+    if not veri_html:
+        logger.warning("İKN %s — Sonuç ilanının 'veriHtml' alanı boş.", ikn)
         return None
 
-    return record
+    logger.debug("İKN %s — Tip 4 ilan bulundu, HTML ayrıştırılıyor...", ikn)
+    return parse_veri_html(veri_html, ikn)
