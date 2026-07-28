@@ -19,6 +19,9 @@ from ekap_client import EkapClient, EkapClientError
 from storage import IKNCache, append_record
 
 # ── Logging Setup ──────────────────────────────────────────────────────────────
+def contains(self, ikn: str) -> bool:
+        """O(1) lookup in dictionary. API Contract for main.py."""
+        return ikn in self._data
 
 def _setup_logging() -> None:
     """Configure root logger + file handler for errors."""
@@ -76,12 +79,6 @@ def main() -> None:
         if not ikn or ikn.lower() == "q":
             break
 
-        # ── Phase 4a: Deduplication (pre-fetch) ────────────────────────
-        if cache.contains(ikn):
-            print(f"  ⏭  İKN '{ikn}' zaten kayıtlı — atlandı.")
-            skip_count += 1
-            continue
-
         # ── Phase 2 + 3: Ingestion & Parsing ───────────────────────────
         try:
             print(f"  ⏳ İKN '{ikn}' sorgulanıyor…")
@@ -94,7 +91,7 @@ def main() -> None:
                 print(record)
                 success_count += 1
             else:
-                print(f"  ⏭  İKN '{ikn}' duplicate — atlandı.")
+                print(f"  ⏭  İKN '{ikn}' duplicate — güncellendi.")
                 skip_count += 1
 
         except EkapClientError as exc:
@@ -113,7 +110,7 @@ def main() -> None:
     # ── Summary ────────────────────────────────────────────────────────
     print("\n" + "─" * 50)
     print(f"Bitti.  {success_count} kayıt eklendi, "
-          f"{error_count} hata, {skip_count} atlandı.")
+          f"{error_count} hata, {skip_count} güncellendi.")
 
     csv_path = os.path.join(config.OUTPUT_DIR, config.OUTPUT_FILE)
     if os.path.isfile(csv_path):

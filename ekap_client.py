@@ -154,23 +154,30 @@ class EkapClient:
     # ══════════════════════════════════════════════════════════════════
 
     def fetch_contract(self, ikn: str) -> ContractRecord:
-        """End-to-end: search → click result → intercept → parse.
-
-        Raises ``EkapClientError`` if no data is found.
-        """
-        # ── Validate & split İKN ───────────────────────────────────────
+        """End-to-end: search → click result → intercept → parse."""
         if "/" not in ikn:
             raise EkapClientError(
                 f"Geçersiz İKN formatı: '{ikn}' — beklenen: YIL/NUMARA"
             )
         ikn_yil, ikn_no = [p.strip() for p in ikn.split("/", 1)]
 
+        # 1. Tarayıcıyı getir (ilk seferde başlatır, sonrakilerde açık olanı verir)
         page = self._ensure_browser()
+        
+        # 2. STATE TEMİZLİĞİ: Her yeni İKN için sayfayı sıfırla (Hard Reset)
+        logger.info("Sekme sıfırlanıyor (eski filtreler ve DOM temizleniyor)...")
+        page.goto(config.SEARCH_PAGE_URL, wait_until="networkidle")
+        
+        # Sayfa yenilendiği için tutorial/pop-up tekrar çıkabilir, onu eziyoruz.
+        self._dismiss_tutorial(page)
+
         self._intercepted.clear()
         logger.info("İKN '%s' aranıyor…", ikn)
 
         # ── Steps 1–4: Fill form & click result ────────────────────────
         self._fill_and_search(page, ikn_yil, ikn_no)
+
+        # ... (Metodun geri kalanı aynı şekilde devam edecek)
 
         # ── Step 5: Click result badge & intercept XHR ─────────────────
         try:

@@ -645,3 +645,68 @@ Call log:
 2026-07-28 16:28:56,836 [WARNING] parser: İKN 2026/687558 — eksik alanlar: Sözleşme Süresi
 2026-07-28 17:02:57,913 [ERROR] asyncio: Task was destroyed but it is pending!
 task: <Task pending name='Task-31' coro=<Locator.wait_for() done, defined at C:\Users\ismai\AppData\Local\Programs\Python\Python313\Lib\site-packages\playwright\_impl\_locator.py:736> wait_for=<Future pending cb=[Task.task_wakeup()]> cb=[SyncBase._sync.<locals>.<lambda>() at C:\Users\ismai\AppData\Local\Programs\Python\Python313\Lib\site-packages\playwright\_impl\_sync_base.py:111, ProtocolCallback.__init__.<locals>.cb() at C:\Users\ismai\AppData\Local\Programs\Python\Python313\Lib\site-packages\playwright\_impl\_connection.py:230]>
+2026-07-28 17:28:38,286 [WARNING] parser: İKN 2026/687558 — eksik alanlar: Sözleşme Süresi
+2026-07-28 17:29:16,026 [ERROR] main: İKN '2026/913475' — beklenmeyen hata
+Traceback (most recent call last):
+  File "C:\Users\ismai\OneDrive\Desktop\ekap_proje\main.py", line 85, in main
+    record = client.fetch_contract(ikn)
+  File "C:\Users\ismai\OneDrive\Desktop\ekap_proje\ekap_client.py", line 173, in fetch_contract
+    self._fill_and_search(page, ikn_yil, ikn_no)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ismai\OneDrive\Desktop\ekap_proje\ekap_client.py", line 228, in _fill_and_search
+    page.locator("#ikn-yil").click()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\ismai\AppData\Local\Programs\Python\Python313\Lib\site-packages\playwright\sync_api\_generated.py", line 17672, in click
+    self._sync(
+    ~~~~~~~~~~^
+        self._impl_obj.click(
+        ^^^^^^^^^^^^^^^^^^^^^
+    ...<10 lines>...
+        )
+        ^
+    )
+    ^
+  File "C:\Users\ismai\AppData\Local\Programs\Python\Python313\Lib\site-packages\playwright\_impl\_sync_base.py", line 115, in _sync
+    return task.result()
+           ~~~~~~~~~~~^^
+  File "C:\Users\ismai\AppData\Local\Programs\Python\Python313\Lib\site-packages\playwright\_impl\_locator.py", line 163, in click
+    return await self._frame._click(self._selector, strict=True, **params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ismai\AppData\Local\Programs\Python\Python313\Lib\site-packages\playwright\_impl\_frame.py", line 591, in _click
+    await self._channel.send("click", self._timeout, locals_to_params(locals()))
+  File "C:\Users\ismai\AppData\Local\Programs\Python\Python313\Lib\site-packages\playwright\_impl\_connection.py", line 69, in send
+    return await self._connection.wrap_api_call(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\ismai\AppData\Local\Programs\Python\Python313\Lib\site-packages\playwright\_impl\_connection.py", line 563, in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("#ikn-yil")
+    - locator resolved to <dx-select-box id="ikn-yil" valueexpr="value" displayexpr="label" data-testid="A393753" ngskiphydration="true" _ngcontent-ng-c1614097565="" customitemcreateevent="input" class="height45 dx-show-invalid-badge dx-selectbox dx-textbox dx-texteditor dx-show-clear-button dx-dropdowneditor-button-visible dx-editor-outlined dx-widget dx-texteditor-with-floating-label dx-dropdowneditor dx-dropdowneditor-field-clickable">…</dx-select-box>
+  - attempting click action
+    2 × waiting for element to be visible, enabled and stable
+      - element is visible, enabled and stable
+      - scrolling into view if needed
+      - done scrolling
+      - <div id="ekap-popup" data-bind="dxControlsDescendantBindings: true" class="dx-overlay-wrapper dx-popup-wrapper ekap-popup dx-overlay-shader">…</div> intercepts pointer events
+    - retrying click action
+    - waiting 20ms
+    2 × waiting for element to be visible, enabled and stable
+      - element is visible, enabled and stable
+      - scrolling into view if needed
+      - done scrolling
+      - <div id="ekap-popup" data-bind="dxControlsDescendantBindings: true" class="dx-overlay-wrapper dx-popup-wrapper ekap-popup dx-overlay-shader">…</div> intercepts pointer events
+    - retrying click action
+      - waiting 100ms
+    33 × waiting for element to be visible, enabled and stable
+       - element is visible, enabled and stable
+       - scrolling into view if needed
+       - done scrolling
+       - <div id="ekap-popup" data-bind="dxControlsDescendantBindings: true" class="dx-overlay-wrapper dx-popup-wrapper ekap-popup dx-overlay-shader">…</div> intercepts pointer events
+     - retrying click action
+       - waiting 500ms
+
+2026-07-28 17:32:25,276 [WARNING] parser: İKN 2026/687558 — eksik alanlar: Sözleşme Süresi

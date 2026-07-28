@@ -1,12 +1,11 @@
-"""CSV / XLSX storage layer — YAGNI architecture.
+"""CSV / XLSX storage layer — Dictionary-based Upsert Architecture.
 
-Implements a flat-file storage approach with in-memory Set caching
-for O(1) duplicate detection.  No database, no upsert — first snapshot
-is immutable.
+Implements a full in-memory dictionary storage approach.
+Reads the entire CSV into RAM, updates records by IKN (O(1)), 
+and rewrites the entire file upon changes.
 
-Pipeline Phases Handled Here:
-  Phase 1 — State Hydration:  ``IKNCache.load()``
-  Phase 4 — Dedup & I/O:     ``IKNCache.contains()`` + ``append_batch()``
+Warning: This is fine for < 100,000 records. If your dataset grows 
+beyond that, migrate to SQLite.
 """
 
 from __future__ import annotations
@@ -23,27 +22,21 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  Phase 1 — State Hydration (In-Memory IKN Cache)
+#  Phase 1 — State Hydration (In-Memory Dictionary)
 # ═══════════════════════════════════════════════════════════════════════
 
 class IKNCache:
-    """Hash-set of IKNs already persisted in the CSV.
+    """Hash-map of records already persisted in the CSV.
 
-    Lookups are O(1).  The set is updated eagerly when new records
-    are appended so that duplicates *within the same session* are
-    also caught.
+    Keys are IKNs, values are dictionaries representing the row.
+    This allows O(1) lookups and O(1) in-memory updates.
     """
 
     def __init__(self) -> None:
-        self._seen: set[str] = set()
-
-    # ── loading ────────────────────────────────────────────────────────
+        self._data: dict[str, dict] = {}
 
     def load(self, filepath: Optional[str] = None) -> int:
-        """Read existing CSV and populate the set.
-
-        Returns the number of IKNs loaded.
-        """
+        """Read existing CSV and populate the dictionary."""
         path = filepath or _csv_path()
         if not os.path.isfile(path):
             logger.info("CSV dosyası bulunamadı — boş cache ile başlanıyor.")
@@ -52,34 +45,52 @@ class IKNCache:
         count = 0
         try:
             with open(path, "r", encoding=config.CSV_ENCODING, newline="") as f:
-                reader = csv.reader(f, delimiter=config.CSV_DELIMITER)
-                next(reader, None)          # skip header
+                reader = csv.DictReader(f, delimiter=config.CSV_DELIMITER)
                 for row in reader:
-                    if row:
-                        self._seen.add(row[0])  # first column = İKN
+                    ikn = row.get("İKN")
+                    if ikn:
+                        self._data[ikn] = row
                         count += 1
         except Exception as exc:
             logger.warning("CSV okuma hatası (cache): %s", exc)
 
-        logger.info("Cache yüklendi — %d İKN mevcut.", count)
+        logger.info("Cache yüklendi — %d kayıt bellekte.", count)
         return count
 
-    # ── queries ────────────────────────────────────────────────────────
+    def get_all_records(self) -> list[dict]:
+        """Return all current records as a list of dicts."""
+        return list(self._data.values())
 
-    def contains(self, ikn: str) -> bool:
-        """O(1) duplicate check."""
-        return ikn in self._seen
-
-    def add(self, ikn: str) -> None:
-        """Register an IKN (called right after append to keep set fresh)."""
-        self._seen.add(ikn)
+    def update_record(self, record: ContractRecord) -> bool:
+        """Update or insert a record in memory.
+        
+        Returns True if it was a new insert, False if it was an update.
+        """
+        ikn = record.ikn
+        is_new = ikn not in self._data
+        
+        # Sadece boş olmayan alanları güncelle (mevcut veriyi ezmemek için defansif)
+        # Eğer her geldiğinde tamamen ezmesini istiyorsan doğrudan self._data[ikn] = record.to_dict() yap.
+        new_data = record.to_dict()
+        if not is_new:
+            current_data = self._data[ikn]
+            for key, value in new_data.items():
+                if value: # Yeni veri boş değilse eskisinin üstüne yaz
+                    current_data[key] = value
+            self._data[ikn] = current_data
+            logger.debug("Bellekte güncellendi: %s", ikn)
+        else:
+            self._data[ikn] = new_data
+            logger.debug("Belleğe eklendi: %s", ikn)
+            
+        return is_new
 
     def __len__(self) -> int:
-        return len(self._seen)
+        return len(self._data)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  Phase 4 — Deduplication & I/O
+#  Phase 4 — I/O (Full Rewrite)
 # ═══════════════════════════════════════════════════════════════════════
 
 def _ensure_output_dir() -> None:
@@ -90,70 +101,61 @@ def _csv_path() -> str:
     return os.path.join(config.OUTPUT_DIR, config.OUTPUT_FILE)
 
 
-def append_record(record: ContractRecord, cache: IKNCache) -> bool:
-    """Append a single record if it is not a duplicate.
-
-    Updates the in-memory cache immediately.
-    Returns True if the record was written, False if dropped as dup.
-    """
-    if cache.contains(record.ikn):
-        logger.info("Duplicate atlandı: %s", record.ikn)
-        return False
-
+def _rewrite_entire_csv(cache: IKNCache) -> None:
+    """Writes the entire in-memory dictionary back to the CSV."""
     _ensure_output_dir()
     path = _csv_path()
-    file_exists = os.path.isfile(path)
+    
+    records = cache.get_all_records()
+    if not records:
+        return
 
-    with open(path, "a", encoding=config.CSV_ENCODING, newline="") as f:
+    with open(path, "w", encoding=config.CSV_ENCODING, newline="") as f:
         writer = csv.DictWriter(
             f,
             fieldnames=ContractRecord.csv_headers(),
             delimiter=config.CSV_DELIMITER,
         )
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow(record.to_dict())
+        writer.writeheader()
+        writer.writerows(records)
 
-    cache.add(record.ikn)
-    logger.info("Kayıt eklendi: %s", record.ikn)
-    return True
+
+def append_record(record: ContractRecord, cache: IKNCache) -> bool:
+    """Upsert a single record and rewrite CSV."""
+    is_new = cache.update_record(record)
+    _rewrite_entire_csv(cache)
+    
+    if is_new:
+        logger.info("Yeni kayıt yazıldı: %s", record.ikn)
+    else:
+        logger.info("Mevcut kayıt güncellendi: %s", record.ikn)
+        
+    return is_new
 
 
 def append_batch(records: list[ContractRecord], cache: IKNCache) -> int:
-    """Append a batch of records, skipping duplicates.
-
-    Checks both the persistent cache AND intra-batch duplicates.
-    Writes all new records in a single I/O operation.
-    Returns the number of records actually written.
+    """Upsert a batch of records and rewrite CSV ONCE at the end.
+    
+    Returns the number of strictly NEW records added.
     """
-    new_records: list[ContractRecord] = []
-    for rec in records:
-        if cache.contains(rec.ikn):
-            logger.info("Duplicate atlandı: %s", rec.ikn)
-            continue
-        new_records.append(rec)
-        cache.add(rec.ikn)  # prevent intra-batch duplicates
-
-    if not new_records:
+    if not records:
         return 0
 
-    _ensure_output_dir()
-    path = _csv_path()
-    file_exists = os.path.isfile(path)
+    new_count = 0
+    update_count = 0
+    
+    for rec in records:
+        is_new = cache.update_record(rec)
+        if is_new:
+            new_count += 1
+        else:
+            update_count += 1
 
-    with open(path, "a", encoding=config.CSV_ENCODING, newline="") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=ContractRecord.csv_headers(),
-            delimiter=config.CSV_DELIMITER,
-        )
-        if not file_exists:
-            writer.writeheader()
-        for rec in new_records:
-            writer.writerow(rec.to_dict())
+    # O(N) maliyetli yazma işlemini döngü dışında sadece 1 kez yapıyoruz
+    _rewrite_entire_csv(cache)
 
-    logger.info("Batch yazıldı — %d yeni kayıt.", len(new_records))
-    return len(new_records)
+    logger.info("Batch Upsert tamamlandı — %d yeni eklendi, %d güncellendi.", new_count, update_count)
+    return new_count
 
 
 # ═══════════════════════════════════════════════════════════════════════
