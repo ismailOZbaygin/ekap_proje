@@ -77,9 +77,8 @@ def _match_label(raw_label: str) -> Optional[str]:
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def parse_veri_html(html_content: str, ikn: str) -> ContractRecord:
-    with open("debug_veri.html", "w", encoding="utf-8") as f:
-        f.write(html_content)
-        
+    # DEBUG DOSYASI YAZMA İŞLEMİ TAMAMEN SİLİNDİ!
+    
     record = ContractRecord(ikn=ikn)
     soup = BeautifulSoup(html_content, "html.parser")
 

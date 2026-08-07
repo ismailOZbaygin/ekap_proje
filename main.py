@@ -14,6 +14,16 @@ import logging
 import os
 import sys
 
+# ── Windows Console UTF-8 Fix ──────────────────────────────────────────────────
+# Windows 10 konsolları varsayılan olarak cp1254/cp1252 encoding kullanır.
+# Bu, Türkçe karakterler ve emoji sembolleri için UnicodeEncodeError'a yol açar.
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass  # Eski Python sürümlerinde reconfigure yoksa sessizce geç
+
 import config
 from ekap_client import EkapClient, EkapClientError
 from storage import IKNCache, append_record
@@ -81,27 +91,27 @@ def main() -> None:
 
         # ── Phase 2 + 3: Ingestion & Parsing ───────────────────────────
         try:
-            print(f"  ⏳ İKN '{ikn}' sorgulanıyor…")
+            print(f"  [..] IKN '{ikn}' sorgulaniyor...")
             record = client.fetch_contract(ikn)
 
             # ── Phase 4b: Dedup & I/O ──────────────────────────────────
             written = append_record(record, cache)
             if written:
-                print("  ✔  Sözleşme verisi bulundu, CSV'ye eklendi.")
+                print("  [OK] Sozlesme verisi bulundu, CSV'ye eklendi.")
                 print(record)
                 success_count += 1
             else:
-                print(f"  ⏭  İKN '{ikn}' kopya — güncellendi.")
+                print(f"  [>>] IKN '{ikn}' kopya - guncellendi.")
                 skip_count += 1
 
         except EkapClientError as exc:
-            print(f"  ✘  {exc}")
+            print(f"  [X] {exc}")
             # Log with exception info to include traceback for diagnostics
             logger.exception("İKN '%s' — %s", ikn, exc)
             error_count += 1
 
         except Exception as exc:
-            print(f"  ✘  Beklenmeyen hata: {exc}")
+            print(f"  [X] Beklenmeyen hata: {exc}")
             logger.exception("İKN '%s' — beklenmeyen hata", ikn)
             error_count += 1
 

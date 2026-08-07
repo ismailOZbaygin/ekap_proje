@@ -60,7 +60,7 @@ class EkapClient:
         logger.info("Tarayıcı başlatılıyor (headless Chromium)…")
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(
-            headless= False,
+            headless= True,
             args=["--disable-blink-features=AutomationControlled"],
         )
         context = self._browser.new_context(
