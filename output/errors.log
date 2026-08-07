@@ -886,3 +886,16 @@ Call log:
   - navigating to "https://ekapv2.kik.gov.tr/ekap/search", waiting until "domcontentloaded"
 
 2026-08-07 12:22:31,124 [WARNING] parser: İKN 2026/687558 — eksik alanlar: Sözleşme Süresi
+2026-08-07 14:33:35,905 [WARNING] ekap_client: Sonuç ilanı veya API yanıtı zaman aşımına uğradı.
+2026-08-07 14:33:36,011 [WARNING] parser: İKN 2026/687558 — '4- Sözleşmenin' başlığı bulunamadı. Kapsam daraltılamıyor.
+2026-08-07 14:33:36,011 [ERROR] main: İKN '2026/687558' — İKN '2026/687558' için sözleşme verisi bulunamadı.
+Traceback (most recent call last):
+  File "C:\Users\ismai\OneDrive\Desktop\staj_projeler\ekap_proje\main.py", line 85, in main
+    record = client.fetch_contract(ikn)
+  File "C:\Users\ismai\OneDrive\Desktop\staj_projeler\ekap_proje\ekap_client.py", line 218, in fetch_contract
+    raise EkapClientError(
+        f"İKN '{ikn}' için sözleşme verisi bulunamadı."
+    )
+ekap_client.EkapClientError: İKN '2026/687558' için sözleşme verisi bulunamadı.
+2026-08-07 14:38:52,321 [WARNING] parser: İKN 2026/687558 — eksik alanlar: Sözleşme Süresi
+2026-08-07 14:55:19,580 [WARNING] parser: İKN 2026/687558 — eksik alanlar: Sözleşme Süresi

@@ -60,7 +60,7 @@ class EkapClient:
         logger.info("Tarayıcı başlatılıyor (headless Chromium)…")
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(
-            headless=True,
+            headless= False,
             args=["--disable-blink-features=AutomationControlled"],
         )
         context = self._browser.new_context(
@@ -103,27 +103,100 @@ class EkapClient:
         except Exception as exc:
             logger.exception("JSON parse hatası: %s", exc)
 
+    # Maximum seconds to wait for the tour popup to appear
+    POPUP_WAIT_SECONDS = 8
+
     @staticmethod
     def _dismiss_tutorial(page: Page) -> None:
-        """Remove the <ekap-tutorial> overlay that blocks pointer events."""
+        """Dismiss the EKAP tour/intro popup if it appears.
+
+        The popup loads asynchronously after the page is ready, so we
+        actively poll for it for up to ``POPUP_WAIT_SECONDS``.  When
+        detected we click the close (×) button; if that fails we try the
+        "Atla" (skip) link.  As a final safety net we inject CSS and
+        remove overlay DOM nodes.
+        """
+        logger.debug("Popup kontrol bekleme süresi başladı (%ds)…",
+                      EkapClient.POPUP_WAIT_SECONDS)
+
+        # ── 1. Actively wait for the popup and click close ──────────────
+        # Selectors that match the close / skip controls on the tour popup
+        close_selectors = [
+            "button.introjs-skipbutton",        # × close button (top-right)
+            "a.introjs-skipbutton",              # sometimes rendered as <a>
+            "a.introjs-button.introjs-skipbutton",
+            ".introjs-tooltipbuttons a[role='button']:last-child",  # Skip btn
+            "button.introjs-donebutton",         # "Bitti" / done button
+        ]
+
+        popup_dismissed = False
         try:
-            # Inject CSS to hide all overlays and disable pointer events
+            # Wait for any part of the intro overlay to appear
+            page.wait_for_selector(
+                ".introjs-overlay, .introjs-tooltip, ekap-tutorial",
+                state="visible",
+                timeout=EkapClient.POPUP_WAIT_SECONDS * 1000,
+            )
+            logger.info("Tour popup algılandı, kapatılmaya çalışılıyor…")
+
+            # Try each close selector in order
+            for sel in close_selectors:
+                try:
+                    btn = page.locator(sel).first
+                    if btn.is_visible(timeout=1000):
+                        btn.click(force=True)
+                        logger.info("Tour popup kapatıldı (selector: %s).", sel)
+                        popup_dismissed = True
+                        page.wait_for_timeout(500)
+                        break
+                except Exception:
+                    continue
+
+            # If no button worked, try pressing Escape as a last resort
+            if not popup_dismissed:
+                page.keyboard.press("Escape")
+                logger.info("Tour popup için Escape tuşu gönderildi.")
+                popup_dismissed = True
+                page.wait_for_timeout(500)
+
+        except PwTimeout:
+            # Popup did not appear within the wait window — that's fine
+            logger.debug("Tour popup %d saniye içinde görünmedi, devam ediliyor.",
+                          EkapClient.POPUP_WAIT_SECONDS)
+        except Exception as exc:
+            logger.debug("Popup bekleme/kapatma hatası: %s", exc)
+
+        # ── 2. Safety-net CSS: hide anything that might remain ──────────
+        try:
             page.add_style_tag(content="""
-                ekap-tutorial, div.overlay, .introjs-overlay, .cdk-overlay-container:has(ekap-tutorial) {
+                .introjs-overlay, .introjs-helperLayer,
+                .introjs-tooltipReferenceLayer, .introjs-tooltip,
+                .introjs-fixedTooltip, .introjs-showElement,
+                ekap-tutorial, div.overlay,
+                .cdk-overlay-container:has(ekap-tutorial) {
                     display: none !important;
                     pointer-events: none !important;
                     visibility: hidden !important;
                     opacity: 0 !important;
                 }
+                body.introjs-fixParent {
+                    overflow: auto !important;
+                    position: static !important;
+                }
             """)
         except Exception as exc:
             logger.debug("CSS overlay gizleme hatası: %s", exc)
 
+        # ── 3. Remove overlay DOM nodes entirely ────────────────────────
         try:
-            # Remove the elements entirely via JavaScript
             removed = page.evaluate("""
                 () => {
-                    const selectors = ['ekap-tutorial', 'div.overlay', '.introjs-overlay'];
+                    const selectors = [
+                        'ekap-tutorial', 'div.overlay',
+                        '.introjs-overlay', '.introjs-helperLayer',
+                        '.introjs-tooltipReferenceLayer', '.introjs-tooltip',
+                        '.introjs-fixedTooltip'
+                    ];
                     let count = 0;
                     selectors.forEach(sel => {
                         document.querySelectorAll(sel).forEach(el => {
@@ -131,11 +204,13 @@ class EkapClient:
                             count++;
                         });
                     });
+                    // Also restore body scroll if intro.js locked it
+                    document.body.classList.remove('introjs-fixParent');
                     return count;
                 }
             """)
             if removed > 0:
-                logger.info("Tutorial overlay kaldırıldı (%d element).", removed)
+                logger.info("Overlay DOM elemanları kaldırıldı (%d element).", removed)
                 page.wait_for_timeout(300)
         except Exception as exc:
             logger.debug("JS overlay kaldırma başarısız: %s", exc)
