@@ -42,10 +42,10 @@ def _setup_logging() -> None:
 # ── Banner ─────────────────────────────────────────────────────────────────────
 
 BANNER = r"""
-╔══════════════════════════════════════════════════╗
-║    EKAP Sözleşme Veri Çekici  v1.0               ║
+╔═══════════════════════════════════════════════════╗
+║    EKAP Sözleşme Veri Çekici  v1.0                ║
 ║    İKN girin, sözleşme verilerini CSV'ye kaydedin ║
-╚══════════════════════════════════════════════════╝
+╚═══════════════════════════════════════════════════╝
 """
 
 
@@ -87,16 +87,17 @@ def main() -> None:
             # ── Phase 4b: Dedup & I/O ──────────────────────────────────
             written = append_record(record, cache)
             if written:
-                print(f"  ✔  Sözleşme verisi bulundu, CSV'ye eklendi.")
+                print("  ✔  Sözleşme verisi bulundu, CSV'ye eklendi.")
                 print(record)
                 success_count += 1
             else:
-                print(f"  ⏭  İKN '{ikn}' duplicate — güncellendi.")
+                print(f"  ⏭  İKN '{ikn}' kopya — güncellendi.")
                 skip_count += 1
 
         except EkapClientError as exc:
             print(f"  ✘  {exc}")
-            logger.error("İKN '%s' — %s", ikn, exc)
+            # Log with exception info to include traceback for diagnostics
+            logger.exception("İKN '%s' — %s", ikn, exc)
             error_count += 1
 
         except Exception as exc:

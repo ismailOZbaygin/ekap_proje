@@ -45,7 +45,18 @@ class IKNCache:
         count = 0
         try:
             with open(path, "r", encoding=config.CSV_ENCODING, newline="") as f:
-                reader = csv.DictReader(f, delimiter=config.CSV_DELIMITER)
+                content = f.read()
+                if not content.strip():
+                    return 0
+
+                # Otomatik ayırıcı (delimiter) tespiti (virgül vs noktalı virgül)
+                first_line = content.splitlines()[0]
+                delimiter = config.CSV_DELIMITER
+                if ";" not in first_line and "," in first_line:
+                    delimiter = ","
+
+            with open(path, "r", encoding=config.CSV_ENCODING, newline="") as f:
+                reader = csv.DictReader(f, delimiter=delimiter)
                 for row in reader:
                     ikn = row.get("İKN")
                     if ikn:
@@ -69,8 +80,6 @@ class IKNCache:
         ikn = record.ikn
         is_new = ikn not in self._data
         
-        # Sadece boş olmayan alanları güncelle (mevcut veriyi ezmemek için defansif)
-        # Eğer her geldiğinde tamamen ezmesini istiyorsan doğrudan self._data[ikn] = record.to_dict() yap.
         new_data = record.to_dict()
         if not is_new:
             current_data = self._data[ikn]
@@ -125,6 +134,12 @@ def append_record(record: ContractRecord, cache: IKNCache) -> bool:
     is_new = cache.update_record(record)
     _rewrite_entire_csv(cache)
     
+    if getattr(config, "EXPORT_XLSX", True):
+        try:
+            export_to_xlsx()
+        except Exception as exc:
+            logger.debug("Auto XLSX export hatası: %s", exc)
+
     if is_new:
         logger.info("Yeni kayıt yazıldı: %s", record.ikn)
     else:
@@ -154,6 +169,12 @@ def append_batch(records: list[ContractRecord], cache: IKNCache) -> int:
     # O(N) maliyetli yazma işlemini döngü dışında sadece 1 kez yapıyoruz
     _rewrite_entire_csv(cache)
 
+    if getattr(config, "EXPORT_XLSX", True):
+        try:
+            export_to_xlsx()
+        except Exception as exc:
+            logger.debug("Auto XLSX export hatası: %s", exc)
+
     logger.info("Batch Upsert tamamlandı — %d yeni eklendi, %d güncellendi.", new_count, update_count)
     return new_count
 
@@ -163,17 +184,17 @@ def append_batch(records: list[ContractRecord], cache: IKNCache) -> int:
 # ═══════════════════════════════════════════════════════════════════════
 
 def export_to_xlsx(xlsx_filename: Optional[str] = None) -> str:
-    """Convert the current CSV to an XLSX file."""
+    """Convert the current CSV to a styled XLSX file."""
     try:
         from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     except ImportError:
-        raise RuntimeError(
-            "openpyxl yüklü değil.  'pip install openpyxl' komutunu çalıştırın."
-        )
+        logger.warning("openpyxl yüklü değil, XLSX oluşturulamadı.")
+        return ""
 
     csv_path = _csv_path()
     if not os.path.isfile(csv_path):
-        raise FileNotFoundError(f"CSV dosyası bulunamadı: {csv_path}")
+        return ""
 
     xlsx_name = xlsx_filename or config.OUTPUT_FILE.replace(".csv", ".xlsx")
     xlsx_path = os.path.join(config.OUTPUT_DIR, xlsx_name)
@@ -182,14 +203,36 @@ def export_to_xlsx(xlsx_filename: Optional[str] = None) -> str:
     ws = wb.active
     ws.title = "Sözleşme Verileri"
 
+    header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+    header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    cell_font = Font(name="Segoe UI", size=10)
+    thin_border = Border(
+        left=Side(style='thin', color='D9D9D9'),
+        right=Side(style='thin', color='D9D9D9'),
+        top=Side(style='thin', color='D9D9D9'),
+        bottom=Side(style='thin', color='D9D9D9')
+    )
+
     with open(csv_path, "r", encoding=config.CSV_ENCODING, newline="") as f:
         reader = csv.reader(f, delimiter=config.CSV_DELIMITER)
-        for row in reader:
+        for row_idx, row in enumerate(reader, 1):
             ws.append(row)
+            for col_idx in range(1, len(row) + 1):
+                cell = ws.cell(row=row_idx, column=col_idx)
+                cell.border = thin_border
+                if row_idx == 1:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                else:
+                    cell.font = cell_font
+
+    ws.row_dimensions[1].height = 25
 
     for col in ws.columns:
-        max_len = max((len(str(cell.value or "")) for cell in col), default=10)
-        ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 60)
+        max_len = max((len(str(cell.value or "")) for cell in col), default=12)
+        col_letter = col[0].column_letter
+        ws.column_dimensions[col_letter].width = min(max_len + 4, 60)
 
     wb.save(xlsx_path)
     logger.info("XLSX oluşturuldu: %s", xlsx_path)

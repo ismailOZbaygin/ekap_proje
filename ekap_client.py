@@ -50,9 +50,7 @@ class EkapClient:
         self._page: Optional[Page] = None
         self._intercepted: list[dict] = []
 
-    # ══════════════════════════════════════════════════════════════════
     #  Lifecycle
-    # ══════════════════════════════════════════════════════════════════
 
     def _ensure_browser(self) -> Page:
         """Launch browser + navigate to search page if not already done."""
@@ -62,7 +60,7 @@ class EkapClient:
         logger.info("Tarayıcı başlatılıyor (headless Chromium)…")
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(
-            headless=False,
+            headless=True,
             args=["--disable-blink-features=AutomationControlled"],
         )
         context = self._browser.new_context(
@@ -83,12 +81,11 @@ class EkapClient:
         logger.info("EKAP arama sayfası yükleniyor…")
         self._page.goto(
             config.SEARCH_PAGE_URL,
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
             timeout=60000,
         )
 
         # Dismiss the tutorial overlay that blocks all pointer events.
-        # <ekap-tutorial> renders a <div class="overlay"> on top of everything.
         self._dismiss_tutorial(self._page)
 
         logger.info("Arama sayfası hazır.")
@@ -104,40 +101,44 @@ class EkapClient:
             self._intercepted.append(body)
             logger.debug("İhale detay verisi yakalandı: %s", response.url)
         except Exception as exc:
-            logger.error("JSON parse hatası: %s", exc)
+            logger.exception("JSON parse hatası: %s", exc)
 
     @staticmethod
     def _dismiss_tutorial(page: Page) -> None:
         """Remove the <ekap-tutorial> overlay that blocks pointer events."""
         try:
-            # Strategy 1: Remove the overlay element via JS (fastest)
-            removed = page.evaluate("""
-                () => {
-                    // Remove the tutorial component entirely
-                    const tutorial = document.querySelector('ekap-tutorial');
-                    if (tutorial) { tutorial.remove(); return 'tutorial'; }
-                    // Or just the overlay div
-                    const overlay = document.querySelector('div.overlay');
-                    if (overlay) { overlay.remove(); return 'overlay'; }
-                    return null;
+            # Inject CSS to hide all overlays and disable pointer events
+            page.add_style_tag(content="""
+                ekap-tutorial, div.overlay, .introjs-overlay, .cdk-overlay-container:has(ekap-tutorial) {
+                    display: none !important;
+                    pointer-events: none !important;
+                    visibility: hidden !important;
+                    opacity: 0 !important;
                 }
             """)
-            if removed:
-                logger.info("Tutorial overlay kaldırıldı (%s).", removed)
-                page.wait_for_timeout(500)
-                return
+        except Exception as exc:
+            logger.debug("CSS overlay gizleme hatası: %s", exc)
+
+        try:
+            # Remove the elements entirely via JavaScript
+            removed = page.evaluate("""
+                () => {
+                    const selectors = ['ekap-tutorial', 'div.overlay', '.introjs-overlay'];
+                    let count = 0;
+                    selectors.forEach(sel => {
+                        document.querySelectorAll(sel).forEach(el => {
+                            el.remove();
+                            count++;
+                        });
+                    });
+                    return count;
+                }
+            """)
+            if removed > 0:
+                logger.info("Tutorial overlay kaldırıldı (%d element).", removed)
+                page.wait_for_timeout(300)
         except Exception as exc:
             logger.debug("JS overlay kaldırma başarısız: %s", exc)
-
-        # Strategy 2: Try clicking the overlay to dismiss it
-        try:
-            overlay = page.locator("div.overlay")
-            if overlay.count() > 0 and overlay.first.is_visible():
-                overlay.first.click(force=True)
-                logger.info("Tutorial overlay tıklanarak kapatıldı.")
-                page.wait_for_timeout(500)
-        except Exception as exc:
-            logger.debug("Overlay tıklama başarısız: %s", exc)
 
     def close(self) -> None:
         """Shut down the browser."""
@@ -166,7 +167,7 @@ class EkapClient:
         
         # 2. STATE TEMİZLİĞİ: Her yeni İKN için sayfayı sıfırla (Hard Reset)
         logger.info("Sekme sıfırlanıyor (eski filtreler ve DOM temizleniyor)...")
-        page.goto(config.SEARCH_PAGE_URL, wait_until="networkidle")
+        page.goto(config.SEARCH_PAGE_URL, wait_until="domcontentloaded", timeout=30000)
         
         # Sayfa yenilendiği için tutorial/pop-up tekrar çıkabilir, onu eziyoruz.
         self._dismiss_tutorial(page)
@@ -176,8 +177,6 @@ class EkapClient:
 
         # ── Steps 1–4: Fill form & click result ────────────────────────
         self._fill_and_search(page, ikn_yil, ikn_no)
-
-        # ... (Metodun geri kalanı aynı şekilde devam edecek)
 
         # ── Step 5: Click result badge & intercept XHR ─────────────────
         try:
@@ -191,7 +190,7 @@ class EkapClient:
                 lambda r: "GetByIhaleIdIhaleDetay" in r.url and r.status == 200,
                 timeout=10000,
             ) as resp_info:
-                result_badge.click()
+                result_badge.click(force=True)
 
             raw_data = resp_info.value.json()
             logger.debug("API yanıtı başarıyla yakalandı.")
@@ -227,31 +226,36 @@ class EkapClient:
     def _fill_and_search(self, page: Page, ikn_yil: str, ikn_no: str) -> None:
         """Formu kullanıcı eylemlerini simüle ederek doldurur ve arar."""
         
+        # Her ihtimale karşı form doldurmadan önce overlay temizliğini tekrar çağır
+        self._dismiss_tutorial(page)
+
         # Sayfanın ve form elemanlarının DOM'da hazır olmasını bekle
         page.wait_for_selector("#ikn-yil", state="visible", timeout=15000)
 
         # ── Adım 1: İKN Yılı (Dropdown / Portal Mekanizması) ──
         # Kutuya tıkla ve portalın (listenin) açılmasını sağla
-        page.locator("#ikn-yil").click()
+        page.locator("#ikn-yil").click(force=True)
         
         # Açılan listede hedef yılı (tam eşleşme ile) bul ve tıkla
-        page.locator(".dx-dropdowneditor-overlay").get_by_text(ikn_yil, exact=True).click()
+        year_option = page.locator(".dx-dropdowneditor-overlay").get_by_text(ikn_yil, exact=True)
+        year_option.wait_for(state="visible", timeout=5000)
+        year_option.click(force=True)
 
         # ── Adım 2: İKN Numarası (Text Input Mekanizması) ──
         # NumberBox içindeki gerçek input alanını hedefle ve rakamları sırayla yaz
         no_input = page.locator("#ikn-no input.dx-texteditor-input")
-        no_input.click()  # Focus almak için
+        no_input.click(force=True)  # Focus almak için
+        no_input.fill("")
         no_input.press_sequentially(ikn_no, delay=50) # Klavyeden yazıyormuş gibi
 
         # ── Adım 3: Filtrele ──
-        page.locator("#search-ihale").click()
+        page.locator("#search-ihale").click(force=True)
 
         # Sonuçların API'den dönüp DOM'a yansımasını bekle
         try:
-            # Filtrele butonuna bastıktan sonra ağ trafiğinin durulmasını bekle
-            page.wait_for_load_state("networkidle", timeout=15000)
+            page.wait_for_load_state("domcontentloaded", timeout=15000)
         except PwTimeout:
-            logger.debug("Networkidle zaman aşımına uğradı, işleme devam ediliyor.")
+            logger.debug("domcontentloaded zaman aşımına uğradı, işleme devam ediliyor.")
 
     def _extract_from_page(self, page: Page, ikn: str) -> Optional[ContractRecord]:
         """Fallback: extract contract data from the rendered DOM."""

@@ -39,6 +39,8 @@ REQUEST_TIMEOUT = 30    # seconds before a single request times out
 # ── Output Settings ────────────────────────────────────────────────────────────
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 OUTPUT_FILE = "sonuclar.csv"
-CSV_DELIMITER = ","
+CSV_DELIMITER = ";"          # Noktalı virgül (Türkiye / Excel Türkçe bölge ayarı ile uyumlu)
 CSV_ENCODING = "utf-8-sig"   # BOM so Excel auto-detects UTF-8
+EXPORT_XLSX = True           # Otomatik .xlsx dosyası da oluştur
 ERROR_LOG = "errors.log"
+
